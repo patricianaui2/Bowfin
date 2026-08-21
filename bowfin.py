@@ -2,7 +2,8 @@ import os
 import time
 from threading import Thread
 from flask import Flask
-from curl_cffi import requests  # Replaces standard requests to bypass Cloudflare
+from curl_cffi import requests
+import feedparser
 
 app = Flask(__name__)
 
@@ -57,7 +58,6 @@ def send_telegram_message(message):
     payload = {"chat_id": chat_id, "text": message, "disable_notification": False}
     
     try:
-        # Using curl_cffi for Telegram as well
         response = requests.post(url, json=payload, timeout=10, impersonate="chrome")
         return response.status_code == 200
     except Exception as e:
@@ -66,65 +66,52 @@ def send_telegram_message(message):
 
 def check_reddit():
     """
-    Fetches newest posts via public Redlib mirrors to bypass Render datacenter IP blocks.
+    Fetches newest posts via Reddit RSS feeds to bypass JSON datacenter bans.
     """
-    # List of reliable Redlib instances
-    mirrors = [
-        "https://safereddit.com",
-        "https://redlib.catsarch.com"
-    ]
-    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BowfinLeadBot/3.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 
     for sub in SUBREDDITS:
-        fetched = False
-        for base_url in mirrors:
-            try:
-                url = f"{base_url}/r/{sub}/new.json"
-                response = requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        try:
+            url = f"https://www.reddit.com/r/{sub}/new.rss"
+            response = requests.get(url, headers=headers, impersonate="chrome", timeout=10)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    posts = data.get("data", {}).get("children", [])
+            if response.status_code == 200:
+                feed = feedparser.parse(response.content)
+                entries = feed.entries
 
-                    for item in posts:
-                        post = item.get("data", {})
-                        post_id = post.get("id", "")
-                        title = post.get("title", "")
-                        body = post.get("selftext", "")
-                        permalink = post.get("permalink", f"/r/{sub}/comments/{post_id}")
+                for entry in entries:
+                    post_id = getattr(entry, "id", getattr(entry, "link", ""))
+                    title = getattr(entry, "title", "")
+                    body = getattr(entry, "summary", "")
+                    link = getattr(entry, "link", "")
 
-                        if post_id in processed_posts:
-                            continue
+                    if post_id in processed_posts:
+                        continue
 
-                        combined_text = f"{title} {body}".lower()
-                        for keyword in KEYWORDS:
-                            if keyword in combined_text:
-                                alert_text = (
-                                    f"📌 New Lead in r/{sub}!\n\n"
-                                    f"Title: {title}\n\n"
-                                    f"Link: https://reddit.com{permalink}"
-                                )
-                                send_telegram_message(alert_text)
-                                time.sleep(1)
-                                break
+                    combined_text = f"{title} {body}".lower()
+                    for keyword in KEYWORDS:
+                        if keyword in combined_text:
+                            alert_text = (
+                                f"📌 New Lead in r/{sub}!\n\n"
+                                f"Title: {title}\n\n"
+                                f"Link: {link}"
+                            )
+                            send_telegram_message(alert_text)
+                            time.sleep(1)
+                            break
 
-                        processed_posts.add(post_id)
+                    processed_posts.add(post_id)
 
-                    print(f"✅ Successfully checked r/{sub} via {base_url} ({len(posts)} posts)", flush=True)
-                    fetched = True
-                    break  # Exit mirror loop upon success
+                print(f"✅ Checked r/{sub} via RSS ({len(entries)} posts)", flush=True)
+            else:
+                print(f"⚠️ Reddit RSS Error {response.status_code} on r/{sub}", flush=True)
 
-                else:
-                    print(f"⚠️ {base_url} returned {response.status_code} for r/{sub}", flush=True)
+        except Exception as e:
+            print(f"❌ Exception checking r/{sub}: {e}", flush=True)
 
-            except Exception as e:
-                print(f"⚠️ Mirror failure on {base_url} for r/{sub}: {e}", flush=True)
-
-        if not fetched:
-            print(f"❌ Failed to fetch r/{sub} across all mirrors.", flush=True)
+# --- BACKGROUND THREAD RADAR ---
 
 def radar_loop():
     print("🚀 Bowfin loop starting...", flush=True)
@@ -136,25 +123,6 @@ def radar_loop():
 def start_background_workers():
     t = Thread(target=radar_loop)
     t.daemon = True
-    t.start()
-
-start_background_workers()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
-# --- BACKGROUND THREAD RADAR ---
-
-def radar_loop():
-    print("🚀 Starting High-Volume Bowfin loop...", flush=True)
-    while True:
-        check_reddit()
-        time.sleep(300) 
-
-def start_background_workers():
-    t = Thread(target=radar_loop)
-    t.daemon = True 
     t.start()
 
 start_background_workers()
