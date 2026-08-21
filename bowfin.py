@@ -66,57 +66,65 @@ def send_telegram_message(message):
 
 def check_reddit():
     """
-    Fetches newest posts directly from Reddit JSON using Chrome TLS impersonation.
-    Bypasses Cloudflare 403 blocks on Render.
+    Fetches newest posts via public Redlib mirrors to bypass Render datacenter IP blocks.
     """
+    # List of reliable Redlib instances
+    mirrors = [
+        "https://safereddit.com",
+        "https://redlib.catsarch.com"
+    ]
+    
     headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BowfinLeadBot/3.0"
     }
 
     for sub in SUBREDDITS:
-        try:
-            url = f"https://www.reddit.com/r/{sub}/new.json?limit=10"
-            
-            # impersonate="chrome" handles the TLS handshake spoofing
-            response = requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        fetched = False
+        for base_url in mirrors:
+            try:
+                url = f"{base_url}/r/{sub}/new.json"
+                response = requests.get(url, headers=headers, impersonate="chrome", timeout=10)
 
-            if response.status_code == 200:
-                data = response.json()
-                posts = data.get("data", {}).get("children", [])
+                if response.status_code == 200:
+                    data = response.json()
+                    posts = data.get("data", {}).get("children", [])
 
-                for item in posts:
-                    post = item.get("data", {})
-                    post_id = post.get("id", "")
-                    title = post.get("title", "")
-                    body = post.get("selftext", "")
-                    permalink = post.get("permalink", "")
+                    for item in posts:
+                        post = item.get("data", {})
+                        post_id = post.get("id", "")
+                        title = post.get("title", "")
+                        body = post.get("selftext", "")
+                        permalink = post.get("permalink", f"/r/{sub}/comments/{post_id}")
 
-                    if post_id in processed_posts:
-                        continue
+                        if post_id in processed_posts:
+                            continue
 
-                    combined_text = f"{title} {body}".lower()
-                    for keyword in KEYWORDS:
-                        if keyword in combined_text:
-                            alert_text = (
-                                f"📌 New Lead in r/{sub}!\n\n"
-                                f"Title: {title}\n\n"
-                                f"Link: https://reddit.com{permalink}"
-                            )
-                            send_telegram_message(alert_text)
-                            time.sleep(1)
-                            break
+                        combined_text = f"{title} {body}".lower()
+                        for keyword in KEYWORDS:
+                            if keyword in combined_text:
+                                alert_text = (
+                                    f"📌 New Lead in r/{sub}!\n\n"
+                                    f"Title: {title}\n\n"
+                                    f"Link: https://reddit.com{permalink}"
+                                )
+                                send_telegram_message(alert_text)
+                                time.sleep(1)
+                                break
 
-                    processed_posts.add(post_id)
+                        processed_posts.add(post_id)
 
-                print(f"✅ Checked r/{sub} successfully ({len(posts)} posts received)", flush=True)
+                    print(f"✅ Successfully checked r/{sub} via {base_url} ({len(posts)} posts)", flush=True)
+                    fetched = True
+                    break  # Exit mirror loop upon success
 
-            else:
-                print(f"⚠️ Reddit HTTP Error {response.status_code} on r/{sub}", flush=True)
+                else:
+                    print(f"⚠️ {base_url} returned {response.status_code} for r/{sub}", flush=True)
 
-        except Exception as e:
-            print(f"❌ Exception checking r/{sub}: {e}", flush=True)
+            except Exception as e:
+                print(f"⚠️ Mirror failure on {base_url} for r/{sub}: {e}", flush=True)
+
+        if not fetched:
+            print(f"❌ Failed to fetch r/{sub} across all mirrors.", flush=True)
 
 def radar_loop():
     print("🚀 Bowfin loop starting...", flush=True)
