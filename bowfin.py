@@ -1,10 +1,8 @@
 import os
-from re import sub
 import time
-from urllib import response
-import requests
 from threading import Thread
 from flask import Flask
+from curl_cffi import requests  # Replaces standard requests to bypass Cloudflare
 
 app = Flask(__name__)
 
