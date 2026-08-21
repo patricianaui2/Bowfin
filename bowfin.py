@@ -137,50 +137,57 @@ def send_telegram_message(message):
     return False
 
 def check_reddit():
+    """
+    Fetches the 10 newest posts per subreddit via PullPush API.
+    Does NOT require a Reddit App, Client Secret, or OAuth key.
+    """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 BowfinBot/1.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BowfinLeadBot/2.0"
     }
+
     for sub in SUBREDDITS:
         try:
-            url = f"https://www.reddit.com/r/{sub}/new.json?limit=10"
+            # PullPush public endpoint
+            url = f"https://api.pullpush.io/topic?subreddit={sub}&size=10"
             response = requests.get(url, headers=headers, timeout=10)
 
-            print(f"📡 r/{sub} HTTP Status Code: {response.status_code}", flush=True)
-            
             if response.status_code == 200:
                 data = response.json()
-                for post in data["data"]["children"]:
-                    post_id = post["data"]["id"]
-                    title = post["data"].get("title", "No Title Available")
-                    body = post["data"].get("selftext", "")
-                    permalink = post["data"].get("permalink", "")
-                    
+                posts = data.get("data", [])
+
+                for post in posts:
+                    post_id = post.get("id", "")
+                    title = post.get("title", "No Title")
+                    body = post.get("selftext", "")
+                    # Construct permalink or use full_link
+                    permalink = post.get("permalink", f"/r/{sub}/comments/{post_id}")
+
                     if post_id in processed_posts:
                         continue
-                    
+
                     combined_text = (title + " " + body).lower()
                     for keyword in KEYWORDS:
                         if keyword in combined_text:
-                            # 1. Generate clean intent line
                             ai_analysis = classify_lead_intent(title, body)
-                            
-                            # 2. Build explicit template formatting output structure
                             alert_text = (
                                 f"📌 New Potential Lead in r/{sub}!\n\n"
                                 f"Title: {title}\n\n"
                                 f"{ai_analysis}\n\n"
                                 f"Link: https://reddit.com{permalink}"
                             )
-                            
                             send_telegram_message(alert_text)
-                            time.sleep(1) 
+                            time.sleep(1)
                             break
-                    
+
                     processed_posts.add(post_id)
-            elif response.status_code == 429:
-                print("🛑 Reddit is rate-limiting this request (Too Many Requests).", flush=True)
+
+                print(f"✅ Successfully checked r/{sub} via PullPush ({len(posts)} posts received)", flush=True)
+
+            else:
+                print(f"⚠️ PullPush API HTTP Error on r/{sub}: {response.status_code}", flush=True)
+
         except Exception as e:
-            print(f"Error checking r/{sub}: {e}", flush=True)
+            print(f"❌ Exception checking r/{sub}: {e}", flush=True)
 
 # --- BACKGROUND THREAD RADAR ---
 
